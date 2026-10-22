@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Viral topic finder</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f6f7fb; color: #1b1f2a; }
+  header { background: #1d2b64; color: #fff; padding: 20px 28px; }
+  main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; padding: 10px 12px; font-size: 16px; border: 1px solid #c5cbda; border-radius: 6px; }
+  button { padding: 10px 16px; font-size: 15px; border: 0; border-radius: 6px; background: #c2185b; color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  .card { background: #fff; border-radius: 10px; padding: 16px 18px; margin: 14px 0; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .score { font-weight: 700; color: #c2185b; }
+  .meta { color: #5a6175; font-size: 13px; margin-top: 6px; }
+  .errors { color: #9a3412; background: #fff7ed; padding: 10px; border-radius: 6px; }
+  .kit { margin-top: 10px; font-size: 14px; }
+  a { color: #1d4ed8; }
+</style>
+</head>
+<body>
+<header><h1 style="margin:0;font-size:22px">Viral topic finder</h1>
+<div style="opacity:.8;font-size:14px">Ranks current headlines in your niche by a transparent virality score.</div></header>
+<main>
+  <form id="f">
+    <input id="niche" placeholder="Niche, e.g. politics" aria-label="Niche" autocomplete="off">
+    <button id="go" type="submit">Find topics</button>
+  </form>
+  <div id="status" class="meta" role="status"></div>
+  <div id="errors"></div>
+  <div id="results"></div>
+</main>
+<script type="module">
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+let niche = ''
+let topics = []
+
+async function post(path, body) {
+  const res = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || 'Request failed')
+  return data
+}
+
+$('f').addEventListener('submit', async (e) => {
+  e.preventDefault()
+  const btn = $('go')
+  btn.disabled = true
+  $('status').textContent = 'Fetching live headlines…'
+  $('results').innerHTML = ''
+  $('errors').innerHTML = ''
+  try {
+    const data = await post('/api/topics', { niche: $('niche').value })
+    niche = data.niche
+    topics = data.topics
+    if (data.errors.length) $('errors').innerHTML = `<div class="errors">Some sources failed: ${data.errors.map(esc).join('; ')}</div>`
+    $('status').textContent = topics.length ? `${topics.length} topics for "${niche}", fetched ${new Date(data.fetchedAt).toLocaleTimeString()}. Scores predict spread; they do not guarantee it.` : 'No topics found. Try a broader niche.'
+    $('results').innerHTML = topics.map((t, i) => `
+      <div class="card" data-i="${i}">
+        <div class="score">${t.score}/100</div>
+        <div><strong>${esc(t.title)}</strong></div>
+        <div class="meta">Momentum ${t.breakdown.momentum}/30 · Recency ${t.breakdown.recency}/25 · Engagement ${t.breakdown.engagement}/25 · Niche fit ${t.breakdown.nicheFit}/10 · Trends ${t.breakdown.trendsOverlap}/10 · ${t.signals.length} source item(s)</div>
+        <div class="kit"><button data-kit="${i}">Build content kit</button> <span class="meta"></span></div>
+      </div>`).join('')
+  } catch (err) {
+    $('status').textContent = ''
+    $('errors').innerHTML = `<div class="errors">${esc(err.message)}</div>`
+  } finally {
+    btn.disabled = false
+  }
+})
+
+$('results').addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-kit]')
+  if (!btn) return
+  const card = btn.closest('.card')
+  const note = card.querySelector('.kit .meta')
+  btn.disabled = true
+  note.textContent = 'Building card, video and sources…'
+  try {
+    const kit = await post('/api/kit', { niche, topic: topics[Number(btn.dataset.kit)] })
+    const files = kit.files.map((f) => `<a href="/${esc(kit.folder)}/${esc(f)}">${esc(f)}</a>`).join(' · ')
+    note.innerHTML = `Saved to <code>${esc(kit.folder)}</code>. ${files}${kit.videoError ? `<br>Video skipped: ${esc(kit.videoError)}` : ''}`
+  } catch (err) {
+    note.textContent = `Failed: ${err.message}`
+  } finally {
+    btn.disabled = false
+  }
+})
+</script>
+</body>
+</html>
